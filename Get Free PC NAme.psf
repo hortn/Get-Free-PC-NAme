@@ -1,0 +1,195 @@
+﻿
+$form_Global_Load = {
+	Import-Module ActiveDirectory
+	$global:adinfo = Get-AD_BD_Info
+	
+	
+	$adinfo | ForEach-Object { Add-ListViewItem -ListView $listview_data -Items $_.osp -Group $listview_data.Groups[0] -SubItems $_.Address, $_.ShortName }
+}
+
+
+
+
+
+Function Get-AD_BD_Info
+{
+	$Server = "secret"
+	$Database = "secret"
+	$ConnectionTimeout = 30
+	$ConnectionString = "Server={0};Database={1};Integrated Security=True;Connect Timeout={2}" -f $Server, $Database, $ConnectionTimeout
+	$QueryTimeout = 120
+	
+	
+	$Connection = New-Object System.Data.SqlClient.SQLConnection
+	$Connection.ConnectionString = $ConnectionString
+	$Connection.Open()
+	if ($Connection.State -ne 'Open')
+	{
+		Write-Host -ForegroundColor Red "ERROR: Не удалось подключиться к БД $Database на сервере $Server."
+	}
+	Else
+	{
+		$Command = New-Object System.Data.SqlClient.SqlCommand($null, $Connection)
+		$Command.CommandTimeout = $QueryTimeout
+		$DataAdapter = New-Object System.Data.SqlClient.SqlDataAdapter($Command)
+		$DataSet = New-Object System.Data.DataSet
+		
+		
+		$Command.CommandText = "SELECT DISTINCT OSP, Address, ShortName FROM pc_locations"
+		$DataAdapter.Fill($DataSet) | Out-Null
+		$DataSet.Tables[0] | Out-Null
+		return $DataSet.Tables[0] | where { $_.ShortName -ne "Null" -and $_.ShortName -notlike '' -and $_.ShortName -notlike "*xen*" -and $_.ShortName -notlike "*CTX*" -and $_.ShortName -notlike "*test*" } | select -Property osp, Address, ShortName -Unique
+		
+	}
+}
+
+Function FindPC
+{
+	
+	param ([string][ValidateNotNull()]
+		[ValidateNotNullOrEmpty()]
+		[Parameter(Mandatory = $true)]
+		$PcName,
+		[switch]$Laptop,
+		[switch]$ARM)
+	
+	if ($laptop.IsPresent)
+	{
+		$PcNameSW = "N-$PcName-*"
+		$Pref = "N-$PcName"
+		$ReplName = "N-$PcName-"
+		
+	}
+	ElseIf ($ARM.IsPresent)
+	{
+		
+		$PcNameSW = "ARM-$PcName-*"
+		$Pref = "ARM-$PcName"
+		$ReplName = "ARM-$PcName-"
+	}
+	
+	Else
+	{
+		
+		$PcNameSW = "$PcName-*"
+		$Pref = "$PcName"
+		$ReplName = "$PcName-"
+		
+	}
+	
+	[int32[]]$PcINT = Get-ADComputer -LDAPFilter "(name=$PcNameSW)" | Where { $_.name -match "\d{3,4}" -and $_.Name -notmatch "[A-Za-z]$"} | foreach { $_.Name.ToUpper().replace("$ReplName", '') } | Sort-Object { [int]$_ }
+	$NewPCINT = $PcINT[-1] + 1
+	
+	if ($PcINT -ne $null)
+	{
+		
+		return "$Pref" + "-" + "$NewPCINT".PadLeft(3, '0')
+	}
+	Else
+	{
+		return "$Pref" + "-" + "1".PadLeft(3, '0')
+		
+	}
+}
+
+
+function Add-ListViewItem
+{
+
+	Param( 
+	[ValidateNotNull()]
+	[Parameter(Mandatory=$true)]
+	[System.Windows.Forms.ListView]$ListView,
+	[ValidateNotNull()]
+	[Parameter(Mandatory=$true)]
+	$Items,
+	[int]$ImageIndex = -1,
+	[string[]]$SubItems,
+	$Group,
+	[switch]$Clear)
+	
+	if($Clear)
+	{
+		$ListView.Items.Clear();
+    }
+    
+    $lvGroup = $null
+    if ($Group -is [System.Windows.Forms.ListViewGroup])
+    {
+        $lvGroup = $Group
+    }
+    elseif ($Group -is [string])
+    {
+        #$lvGroup = $ListView.Group[$Group] # Case sensitive
+        foreach ($groupItem in $ListView.Groups)
+        {
+            if ($groupItem.Name -eq $Group)
+            {
+                $lvGroup = $groupItem
+                break
+            }
+        }
+        
+        if ($null -eq $lvGroup)
+        {
+            $lvGroup = $ListView.Groups.Add($Group, $Group)
+        }
+    }
+    
+	if($Items -is [Array])
+	{
+		$ListView.BeginUpdate()
+		foreach ($item in $Items)
+		{		
+			$listitem  = $ListView.Items.Add($item.ToString(), $ImageIndex)
+			#Store the object in the Tag
+			$listitem.Tag = $item
+			
+			if($null -ne $SubItems)
+			{
+				$listitem.SubItems.AddRange($SubItems)
+			}
+			
+			if($null -ne $lvGroup)
+			{
+				$listitem.Group = $lvGroup
+			}
+		}
+		$ListView.EndUpdate()
+	}
+	else
+	{
+		#Add a new item to the ListView
+		$listitem  = $ListView.Items.Add($Items.ToString(), $ImageIndex)
+		#Store the object in the Tag
+		$listitem.Tag = $Items
+		
+		if($null -ne $SubItems)
+		{
+			$listitem.SubItems.AddRange($SubItems)
+		}
+		
+		if($null -ne $lvGroup)
+		{
+			$listitem.Group = $lvGroup
+		}
+	}
+}
+
+
+
+
+
+
+$listview_data_MouseDoubleClick=[System.Windows.Forms.MouseEventHandler]{
+	$Index = $listview_data.SelectedIndices
+	$SortName = $global:adinfo[$Index].ShortName
+	
+	$textbox1.Text =  FindPC  -PcName $SortName
+	$textbox2.Text = FindPC -PcName $SortName -Laptop
+	$textbox3.Text = FindPC -PcName $SortName -ARM
+	
+	$Index = $null
+	$SortName = $null
+	
+}
